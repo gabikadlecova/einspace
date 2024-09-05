@@ -73,6 +73,7 @@ if __name__ == "__main__":
         computation_module_prob=config["search_space_computation_module_prob"],
         min_module_depth=config["search_space_min_module_depth"],
         max_module_depth=config["search_space_max_module_depth"],
+        futures_timeout=config.get("futures_timeout", None)
     )
     compiler = Compiler()
 
@@ -112,6 +113,7 @@ if __name__ == "__main__":
                     config["num_classes"],
                     config,
                 )
+                print('a')
                 zero_cost_proxy = config["search_strategy_architecture_seed"].split("_")[-1]
                 measure = find_measures(
                     model,
@@ -120,15 +122,30 @@ if __name__ == "__main__":
                     device=device,
                     measure_names=[zero_cost_proxy],
                 )
-                return {"val_score": measure}
-            random_search = RandomSearch(
+                print(measure)
+                return {"val_score": measure, "duration": 0, "lr": 0, "momentum": 0, "weight_decay": 0, "epoch": 0}
+            #random_search = RandomSearch(
+            #    search_space=einspace,
+            #    compiler=compiler,
+            #    evaluation_fn=zero_cost_evaluation_fn,
+            #    num_samples=config["search_strategy_warmup_samples"],
+            #    save_name=exp_name,
+            #    continue_search=config["search_strategy_continue_search"],
+            #)
+
+            random_search = RegularisedEvolution(
                 search_space=einspace,
                 compiler=compiler,
                 evaluation_fn=zero_cost_evaluation_fn,
-                num_samples=config["search_strategy_warmup_samples"],
+                num_samples=config["search_strategy_num_samples"],
+                init_pop_size=config["search_strategy_init_pop_size"],
+                sample_size=config["search_strategy_sample_size"],
                 save_name=exp_name,
                 continue_search=config["search_strategy_continue_search"],
+                architecture_seed=[],
+                update_population=config["search_strategy"] == "re",
             )
+
             warmup_history = random_search.search()
             architecture_seed = warmup_history[:config["search_strategy_init_pop_size"]]
         elif (

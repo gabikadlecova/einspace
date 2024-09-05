@@ -12,11 +12,25 @@ from einspace.activations import *
 from einspace.compiler import Compiler
 from einspace.layers import *
 from einspace.utils import (
-    ArchitectureCompilationError,
+ArchitectureCompilationError,
     SearchSpaceSamplingError,
     millify,
     predict_num_parameters,
 )
+
+from functools import reduce
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as ThreadTimeoutError
+
+
+def _get_max_size():
+    _usage = psutil.virtual_memory()
+    full_mem = _usage.available
+    return full_mem // 3
+
+
+MAX_SIZE = _get_max_size()
+#MAX_SIZE = 64424509440 // 3
 
 
 class SearchState:
@@ -242,6 +256,7 @@ class EinSpace:
         min_module_depth=0,
         max_module_depth=100,
         device="cpu",
+        futures_timeout=None
     ):
         self.input_shape = input_shape
         self.input_mode = input_mode
@@ -252,6 +267,8 @@ class EinSpace:
         self.min_module_depth = min_module_depth
         self.max_module_depth = max_module_depth
         self.device = device  # currently isn't used
+        self.futures_timeout = futures_timeout
+        print(self.futures_timeout)
 
     def recurse_sample(
         self,
@@ -267,7 +284,8 @@ class EinSpace:
         node_to_remove=None,
     ):
         """Recursively sample each module of the architecture."""
-        # print(level, input_shape, other_shape, last_im_input_shape)
+        #print(level, input_shape, other_shape, last_im_input_shape)
+        
         options = deepcopy(self.available_options[level])
         # if this is a mutation, we remove the node that we are mutating
         if node_to_remove is not None:
@@ -361,6 +379,8 @@ class EinSpace:
         input_branching_factor,
         module_depth,
     ):
+        #print('filter it')
+        #print(input_shape, other_shape, input_branching_factor)
         """Filter the available options based on the input_shape, other_shape and input_mode."""
         # f.write(f"\t pre-filtering options: {[fn.__name__ for fn in options]}\n")
         # filtering for modules
@@ -571,6 +591,11 @@ class EinSpace:
         last_im_input_shape=None,
         module_depth=0,
     ):
+        #print('Instantiate ', input_shape, other_shape, ' chosen: ', chosen.__name__)
+        input_size = reduce((lambda x, y: x * y), input_shape)
+        if input_size > MAX_SIZE:
+            raise SearchSpaceSamplingError("Trying to instantiate an absolute unit.")
+
         if "im2col" in chosen.__name__:
             last_im_input_shape = chosen(
                 **{"input_shape": input_shape}
@@ -682,6 +707,7 @@ class EinSpace:
                         self.branching_factor_dict[branching_fn["fn"].__name__]
                     )
                 ]
+                #print('after copy')
             else:
                 raise ArchitectureCompilationError(
                     "A branching factor of 1 is not supported in a branching module. Branching function: "
@@ -724,6 +750,7 @@ class EinSpace:
                     "node_type": "nonterminal",
                 }
             )
+            #print('ou je')
         elif chosen.__name__ == "routing_module":
             # print("before prerouting_fn", level, input_shape)
             prerouting_fn = self.recurse_sample(
@@ -1250,11 +1277,13 @@ class EinSpace:
                     fn.__name__.index("d") + 1 : fn.__name__.rindex("t")
                 ]
             )
+            #print('bef forward')
             if branching_factor > 2:
-                return [
+                fun = fn()
+                #print('after fn()')
+                vvv = [
                     input_shape[0],
-                    *fn()
-                    .forward(
+                    *fun.forward(
                         [
                             torch.randn((1, *input_shape[1:]))
                             for _ in range(branching_factor)
@@ -1262,8 +1291,10 @@ class EinSpace:
                     )
                     .shape[1:],
                 ]
+                #print('after forward')
+                return vvv
             elif branching_factor == 2:
-                return [
+                vvv = [
                     input_shape[0],
                     *fn()
                     .forward(
@@ -1274,6 +1305,8 @@ class EinSpace:
                     )
                     .shape[1:],
                 ]
+                #print('after forward')
+                return vvv
         elif "add_tensors" in fn.__name__:
             if not torch.equal(
                 torch.tensor(input_shape[1:]),
@@ -1877,6 +1910,24 @@ class EinSpace:
             # pprint(repeated_d)
             return repeated_d
 
+    def sample_one_arch(self, f):
+        def _sample():
+            return self.recurse_sample(
+                f, "network", self.input_shape, None, self.input_mode, None
+            )
+
+        if self.futures_timeout is not None:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_sample)
+                try:
+                    result = future.result(timeout=self.futures_timeout)
+                    return result
+                except ThreadTimeoutError:
+                    raise TimeoutError
+        else:
+            return _sample()
+        
+
     def sample(self):
         """Sample a random architecture."""
         r = randint(0, 10000)
@@ -1885,9 +1936,10 @@ class EinSpace:
             self.start_time = time.time()
             f = None
             try:
-                architecture_dict = self.recurse_sample(
-                    f, "network", self.input_shape, None, self.input_mode, None
-                )
+                architecture_dict = self.sample_one_arch(f) #self.recurse_sample(
+                #    f, "network", self.input_shape, None, self.input_mode, None
+                #)
+                #print('sampled')
 
                 # check whether the architecture contains too many parameters
                 num_predicted_params = predict_num_parameters(
@@ -2000,6 +2052,7 @@ class EinSpace:
         return new_architecture_dict
 
     def recurse_num_nodes(self, d):
+        #print('num nodes')
         """Label all nodes within the architecture dictionary with a number."""
         d["node_id"] = self.num_nodes
         if "sequential_module" in d["fn"].__name__:
