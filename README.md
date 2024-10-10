@@ -1,4 +1,6 @@
 # `einspace`: Searching for Neural Architectures from Fundamental Operations
+Accepted to NeurIPS 2024
+
 [[paper]](https://arxiv.org/abs/2405.20838) [[project page]](https://linusericsson.github.io/einspace/)
 
 This is the official codebase for `einspace`, a new expressive search space for neural architecture search.
@@ -82,10 +84,11 @@ python einspace/main.py --config configs/language/re_language.yaml --device cuda
 ## Cite us!
 
 ```
-@article{ericsson2024einspace,
+@inproceedings{ericsson2024einspace,
     title={einspace: Searching for Neural Architectures from Fundamental Operations}, 
     author={Linus Ericsson and Miguel Espinosa and Chenhongyi Yang and Antreas Antoniou and Amos Storkey and Shay B. Cohen and Steven McDonagh and Elliot J. Crowley},
     year={2024},
+    booktitle={NeurIPS},
     eprint={2405.20838},
     archivePrefix={arXiv},
     primaryClass={cs.LG}
